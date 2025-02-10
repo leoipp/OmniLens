@@ -1,7 +1,6 @@
 from Setup.GuiSetup import UiSetup
 from Setup.Auxiliares import setup_file_browser
 from Setup.Auxiliares import resource_path
-from Setup.Auxiliares import update_spin_boxes
 from Setup.Auxiliares import setup_layers_tree
 from Setup.Auxiliares import open_existing_project
 from Setup.Auxiliares import update_file_browser_root

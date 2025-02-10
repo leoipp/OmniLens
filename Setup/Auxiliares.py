@@ -1,3 +1,4 @@
+import pickle
 from functools import partial
 
 from PyQt5.QtGui import QStandardItem, QStandardItemModel
@@ -8,6 +9,7 @@ from PyQt5.QtWidgets import QMenu, QAction, QFileDialog, QTreeView, QFileSystemM
 from PyQt5.QtCore import QDir, Qt, QSettings, QTimer
 import os, sys
 import pandas as pd
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from Setup.AjusteDock import open_ajuste_dock
 from Setup.GraficosDock import open_graficos_dock
@@ -246,71 +248,6 @@ def load_excel(file_path, mdi_area, opened_subwindows):
         print(f"Error loading file: {e}")
 
 
-def update_spin_boxes(frame, count, double=False):
-    """Update the SpinBoxes in the frame based on the count value, with labels and a ComboBox for activation functions.
-
-    Args:
-        frame: The frame that holds the spin boxes.
-        count: The number of spin boxes to create.
-        double: Whether to create double spin boxes (default is False).
-    """
-
-    # List of Keras activation functions for the ComboBox
-    activation_functions = ['elu', 'relu', 'sigmoid', 'tanh', 'softmax', 'selu', 'softplus', 'linear']
-
-    # Ensure the frame has a layout (if not, create one)
-    if not frame.layout():
-        frame.setLayout(QGridLayout())
-
-    # Clear all existing widgets (SpinBoxes and labels) from the layout
-    for i in reversed(range(frame.layout().count())):
-        widget = frame.layout().itemAt(i).widget()
-        if widget is not None:
-            widget.deleteLater()
-
-    # Create new SpinBoxes, Labels, and ComboBoxes based on the count value
-    layout = frame.layout()  # Access the existing grid layout
-    row = 0
-    col = 0
-    for i in range(count):
-        # Create the label for the spin box
-        label = QLabel(f"C{i + 1}:", frame)
-        layout.addWidget(label, row, col)  # Add the label to the grid layout
-
-        if not double:
-            # Create a ComboBox for activation functions for regular SpinBoxes
-            combo_box = QComboBox(frame)
-            combo_box.addItems(activation_functions)  # Add activation function options
-            layout.addWidget(combo_box, row, col + 1)  # Add the ComboBox to the grid layout
-
-            col += 2  # Move 2 steps (label + combo box)
-        else:
-            col += 1  # Move 1 step for the label before the spin box
-
-        if double:
-            # Create a DoubleSpinBox (for double)
-            spin_box = QDoubleSpinBox(frame)
-            spin_box.setMinimum(0)
-            spin_box.setMaximum(0.5)  # Adjust max value if necessary
-            spin_box.setSingleStep(0.01)
-            layout.addWidget(spin_box, row, col + 1)  # Add the DoubleSpinBox to the grid layout
-
-            col += 2  # Move 2 steps (1 for the label + 1 for the spin box)
-        else:
-            # Create a regular SpinBox
-            spin_box = QSpinBox(frame)
-            spin_box.setMinimum(0)
-            spin_box.setMaximum(100)  # Adjust max value if necessary
-            layout.addWidget(spin_box, row, col + 1)  # Add the SpinBox to the grid layout
-
-            col += 2  # Move 2 steps (1 for the label + 1 for the spin box)
-
-        # Move to the next position in the grid layout if needed
-        if col >= 6:  # Adjust to the number of columns (3 sets of labels, combo boxes, and spin boxes)
-            col = 0
-            row += 1
-
-
 def open_existing_project(self):
     """Open an existing project folder"""
     project_folder = QFileDialog.getExistingDirectory(self, "Abrir Diretório de Projeto", "")
@@ -332,17 +269,13 @@ def set_default_layout(self):
         self.navegacao.setVisible(True)
     if not self.conteudo.isVisible():
         self.conteudo.setVisible(True)
-    if not self.modelos.isVisible():
-        self.modelos.setVisible(True)
 
     # Set them to be docked (not floating) by default
     self.navegacao.setFloating(False)
     self.conteudo.setFloating(False)
-    self.modelos.setFloating(False)
 
     self.addDockWidget(Qt.RightDockWidgetArea, self.navegacao)
     self.addDockWidget(Qt.LeftDockWidgetArea, self.conteudo)
-    self.addDockWidget(Qt.RightDockWidgetArea, self.modelos)
 
     # Optionally, reset any custom positions, sizes, or other settings
     # You could use a fixed default position, if needed, e.g.,:
@@ -351,16 +284,28 @@ def set_default_layout(self):
 
 
 def setup_second_tree(tree_view, opened_subwindows, mdi_area):
-    """Configura a árvore para lidar com o menu de contexto de clique direito"""
+    """Configura a árvore para lidar com o menu de contexto de clique direito,
+    permitindo apenas no primeiro nível da árvore."""
+
     # Garante que a árvore usa um QStandardItemModel
     model = QStandardItemModel()
     model.setHorizontalHeaderLabels(["Camadas"])
     tree_view.setModel(model)  # Define o modelo correto
     tree_view.setContextMenuPolicy(Qt.CustomContextMenu)
-    tree_view.customContextMenuRequested.connect(
-        lambda point: show_context_menu_second_tree(tree_view, point, opened_subwindows, mdi_area)
-    )
 
+    def show_menu_if_top_level(point):
+        """Mostra o menu de contexto apenas se o item for de primeiro nível."""
+        index = tree_view.indexAt(point)
+        if not index.isValid():
+            return  # Nenhum item foi clicado
+
+        item = model.itemFromIndex(index)
+        if item and item.parent() is None:  # Apenas itens sem pai (nível 1)
+            show_context_menu_second_tree(tree_view, point, opened_subwindows, mdi_area)
+        elif item and item.parent() is not None:  # Itens com pai (nível 2)
+            show_context_menu_second_tree_subitems(tree_view, point, mdi_area)  # Imprime 'x' quando for um item de segundo nível
+
+    tree_view.customContextMenuRequested.connect(show_menu_if_top_level)
 
 def show_context_menu_second_tree(tree_view, point, opened_subwindows, mdi_area):
     """Exibe o menu de contexto com as opções 'Abrir Tabela', 'Gráfico' e 'Ajustes'"""
@@ -383,22 +328,19 @@ def show_context_menu_second_tree(tree_view, point, opened_subwindows, mdi_area)
     grafico_action = QAction("Gráfico", tree_view)
 
     # Create the submenu for 'Gráfico'
-    grafico_submenu = QMenu("Opções de Gráfico", tree_view)
+    grafico_submenu = QMenu("Gráficos", tree_view)
 
     # Add actions to the submenu
-    grafico_option1 = QAction("Dispersão", tree_view)
-    grafico_option2 = QAction("Barras", tree_view)
-    grafico_option3 = QAction("Histograma", tree_view)
+    grafico_option1 = QAction("Análise de Dados", tree_view)
+    grafico_option2 = QAction("Análise de Modelos", tree_view)
 
     # Connect each action to corresponding methods (example)
-    grafico_option1.triggered.connect(lambda: open_graficos_dock(tree_view.window(), tree_view))
+    grafico_option1.triggered.connect(lambda: open_graficos_dock(tree_view.window(), tree_view, mdi_area))
     grafico_option2.triggered.connect(lambda: print("Gráfico Opção 2 Selected"))
-    grafico_option3.triggered.connect(lambda: print("Gráfico Opção 3 Selected"))
 
     # Add options to the submenu
     grafico_submenu.addAction(grafico_option1)
     grafico_submenu.addAction(grafico_option2)
-    grafico_submenu.addAction(grafico_option3)
 
     # Add the submenu to the main context menu
     context_menu.addMenu(grafico_submenu)
@@ -406,28 +348,48 @@ def show_context_menu_second_tree(tree_view, point, opened_subwindows, mdi_area)
     # 'Ajustes' action
     ajustes_action = QAction("Ajuste", tree_view)
     # Create the submenu for 'Gráfico'
-    ajustes_submenu = QMenu("Opções de Ajuste", tree_view)
+    ajustes_submenu = QMenu("Ajuste", tree_view)
 
     # Add actions to the submenu
     ajustes_option1 = QAction("Redes Neurais", tree_view)
     ajustes_option2 = QAction("Random Forest", tree_view)
-    ajustes_option3 = QAction("Opção 3", tree_view)
 
     # Connect each action to corresponding methods (example)
     ajustes_option1.triggered.connect(lambda: open_ajuste_dock(tree_view.window()))
     ajustes_option2.triggered.connect(lambda: print("Gráfico Opção 2 Selected"))
-    ajustes_option3.triggered.connect(lambda: print("Gráfico Opção 3 Selected"))
 
     # Add options to the submenu
     ajustes_submenu.addAction(ajustes_option1)
     ajustes_submenu.addAction(ajustes_option2)
-    ajustes_submenu.addAction(ajustes_option3)
 
     context_menu.addMenu(ajustes_submenu)
 
     # Execute the context menu
     context_menu.exec_(tree_view.mapToGlobal(point))
 
+def show_context_menu_second_tree_subitems(tree_view, point, mdi_area):
+    """Exibe o menu de contexto com as opções 'Abrir Tabela', 'Gráfico' e 'Ajustes'"""
+
+    # Get the index of the clicked item
+    index = tree_view.indexAt(point)
+    print(index.data()) #NOME
+    print(f"Index at point: {index}")  # Debug: Check the index
+    row = index.row()
+    print(f"Row: {row}")  # Debug: Check the row
+
+    # Create the main context menu
+    context_menu = QMenu(tree_view)
+    print(resource_path(index.data()))
+
+    # 'Abrir Tabela' action
+    abrir_tabela_action = QAction("Abrir Gráfico", tree_view)
+    abrir_tabela_action.triggered.connect(lambda _, idx=index: open_pkl_graph(idx, index.data(),
+                                                                              r'G:\PycharmProjects\HGLLEO\pythonProject\Temp\Gráfico de Dispersão - .pkl',
+                                                                              mdi_area))
+    context_menu.addAction(abrir_tabela_action)
+
+    # Execute the context menu
+    context_menu.exec_(tree_view.mapToGlobal(point))
 
 def open_table(index, opened_subwindows, mdi_area):
     """Abre a tabela correspondente ao item selecionado"""
@@ -460,6 +422,47 @@ def open_table(index, opened_subwindows, mdi_area):
     print(f"File path: {file_path}")
     load_excel(file_path, mdi_area, opened_subwindows)  # Abre o arquivo no mdi_area
 
+
+def open_pkl_graph(index, title, file_path, mdi_area):
+    """Opens a .pkl graph and displays it in a new MDI subwindow."""
+    item_name = index.data()  # Obtém o nome do item selecionado (apenas o nome do arquivo)
+    print(f"Index data: {item_name}")  # Para depuração
+    janelas = [sw.windowTitle() for sw in mdi_area.subWindowList()]
+    print(janelas)
+    # Verifica se já existe uma subjanela aberta com esse nome
+    for sub_window in mdi_area.subWindowList():
+        if sub_window.windowTitle() == item_name:  # Comparação correta
+            sub_window.showNormal()  # Exibe a subjanela no modo normal
+            sub_window.raise_()  # Coloca a subjanela à frente
+            return  # Se já estiver aberta, retorna sem abrir outra
+
+    # Caso o arquivo não tenha sido encontrado entre as janelas abertas
+    print(f"Opening new table for {item_name}.")
+
+    try:
+        # Load the figure from the pickle file
+        with open(file_path, 'rb') as f:
+            fig = pickle.load(f)
+
+        # Create a new QMdiSubWindow
+        subwindow = CustomMdiSubWindow()
+        subwindow.setWindowTitle(f"{title}")
+
+        # Create a widget to contain the plot
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Embed the figure in the widget using Matplotlib's FigureCanvasQTAgg
+        canvas = FigureCanvas(fig)  # Correct canvas for PyQt5
+        canvas.drwa()
+        layout.addWidget(canvas)
+
+        # Set the widget in the subwindow and add it to mdi_area
+        subwindow.setWidget(widget)
+        mdi_area.addSubWindow(subwindow)
+        subwindow.show()
+    except Exception as e:
+        print(f"Error opening graph from {file_path}: {e}")
 
 def status_bar_message(self, message, timeout=3000):
     """Display a message on the status bar and clear it after a timeout."""
